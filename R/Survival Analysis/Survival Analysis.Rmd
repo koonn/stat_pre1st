@@ -1,0 +1,148 @@
+---
+title: "Survival Analysis"
+author: "Konno Takahiro"
+date: "2024/03/02"
+output: 
+  md_document:
+    variant: markdown_github
+    toc: false
+    number_sections: false
+---
+
+# Survival Analysis
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import_library, message=FALSE}
+library(survival)
+library(ranger) # for random forest
+library(ggplot2)
+library(tidyverse)
+library(ggfortify) # for plot statistical stuff
+library(survminer)
+```
+
+## read data
+
+データの説明
+
+- trt: treatment (1=standard, 2=test)
+- celltype: cell type (1=squamous, 2=smallcell, 3=adeno, 4=large)
+- time: survival time in days
+- status: censoring status (1=censored, 2=dead)
+- karno: Karnofsky performance score (100=good, 0=dead)
+- diagtime: months from diagnosis to randomization (診断から無作為割り付けまでの月数)
+- age: in years
+- prior: prior therapy (0=none, 10=had prior therapy) (事前治療を受けているか)
+
+```{r}
+df <- veteran
+head(df)
+```
+
+## Survオブジェクト
+
+Rで生存分析をするなら、データをSurvオブジェクトに変換する必要がある。Survオブジェクトは生存時間と生存状態を保持するオブジェクトである。第一引数に生存時間、第二引数に生存状態(イベントが発生した個体か、打ち切りか)を指定する。
+
+```{r}
+# same as Surv(df$time, df$status)
+km <- with(df, Surv(time, status))
+head(km,80)
+```
+
+Survオブジェクトは、生存時間の右側打ち切りを考慮する。数字に"+"がついているものは、右側打ち切りを表す。
+
+
+## Kaplan-Meier curve
+### 全体に対する生存曲線
+
+Kaplan-Meier曲線を描画する。
+
+```{r}
+km_fit <- survfit(Surv(time, status) ~ 1, data = df)
+summary(km_fit, times = c(1, 30, 60, 90*(1:10)))
+```
+
+```{r}
+autoplot(km_fit)
+```
+
+### treatment groupごとの生存曲線
+
+treatment groupごとの生存率を比較するには、式表現の右辺にtreatment groupを指定する。
+trt=1ならば標準治療、trt=2ならば新治療を受けたということになる。
+
+```{r}
+km_fit_trt <- survfit(Surv(time, status) ~ trt, data = df)
+summary(km_fit_trt, times = c(1, 30, 60, 90*(1:10)))
+```
+
+```{r}
+autoplot(km_fit_trt)
+```
+
+### 年齢ごとの生存曲線
+
+```{r}
+df <- df %>% mutate(age_group = ifelse(age < 60, "under 60", "over 60"))
+```
+
+```{r}
+km_fit_age <- survfit(Surv(time, status) ~ age_group, data = df)
+summary(km_fit_age, times = c(1, 30, 60, 90*(1:10)))
+```
+
+```{r}
+autoplot(km_fit_age)
+```
+
+## Cox比例ハザードモデル
+
+```{r}
+# build cox model
+cox_model <- coxph(Surv(time, status) ~ trt + celltype + karno + diagtime + age + prior, data = df)
+summary(cox_model)
+```
+
+### 比例ハザード性の検定
+#### log-log plotによる可視化
+
+カプラン・マイヤー推定量を求めた後、plot関数のfun引数に'cloglog'を指定すると、二重対数が表示される。したがってこれが並行かを確認することで、比例ハザード性を検定できる。クロスしているので、比例ハザード性を仮定できないように見える。
+
+```{r}
+ggsurvplot(km_fit_trt, fun = "cloglog")
+```
+
+#### Schoenfeld残差による可視化
+
+Schoenfeld残差を求めるためには、cox.zph関数を使う。karnoは時間と共に変化するため、karnoに対しては比例ハザード性を仮定できないように見える。
+
+```{r}
+fit_test <- cox.zph(cox_model)
+
+# 3*2のプロット
+par(mfrow=c(2,3))
+plot(fit_test, var = 1)
+plot(fit_test, var = 2)
+plot(fit_test, var = 3)
+plot(fit_test, var = 4)
+plot(fit_test, var = 5)
+plot(fit_test, var = 6)
+```
+
+#### Schoenfeld残差による適合度検定
+
+Schoenfeld残差と生存時間の間の相関を検定する。帰無仮説は相関係数が0であることである。celltypeおよびkarnoが有意な相関を持っているため、比例ハザード性を仮定できないように見える。
+
+```{r}
+print(cox.zph(cox_model))
+```
+
+### Cox比例ハザードモデルの可視化
+
+```{r}
+cox_fit <- survfit(cox_model)
+autoplot(cox_fit)
+```
