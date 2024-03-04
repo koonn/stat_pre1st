@@ -1,0 +1,88 @@
+---
+title: 混合分布モデルの実装例
+author: "Konno Takahiro"
+date: "2024/03/03"
+output: 
+  md_document:
+    variant: markdown_github
+    toc: false
+    number_sections: false
+---
+
+## 混合分布モデルの実装例
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import_library, message=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(mixtools)
+```
+
+### データの読み込み
+
+faithfulデータセットを使用する。faithfulデータセットは、Old Faithful間欠泉の噴出間隔と噴出時間のデータセットである
+-  **eruptions**: 噴出時間
+-  **waiting**: 噴出間隔
+
+```{r}
+df <- faithful
+df %>% head()
+```
+
+waitingの分布を可視化する。
+
+```{r}
+ggplot(df, aes(x=waiting)) +
+  geom_density(fill="skyblue", alpha=0.5)
+```
+
+このデータは、2峰性の分布をしていることがわかる。そこで、このデータを2つの正規分布の混合モデルで表現することを考える
+
+### 混合分布モデルの推定
+
+2つの正規分布の確率密度関数を仮定する。
+
+```{r}
+set.seed(1)
+x <- df$waiting
+mixmdl <- normalmixEM(x, k=2)
+```
+
+### 推定結果の可視化
+
+推定結果を可視化するための関数を定義する。
+
+```{r}
+#' Plot a Mixture Component
+#' 
+#' @param x Input data
+#' @param mu Mean of component
+#' @param sigma Standard deviation of component
+#' @param lambda Mixture weight of component(lamnによって、各正規分布を縦方向に伸縮させて調整している)
+plot_mix_comps <- function(x, mu, sigma, lambda) {
+  lambda * dnorm(x, mu, sigma)
+}
+```
+
+推定結果を可視化する。
+
+```{r}
+ggplot(df) +
+  geom_histogram(aes(x=waiting, y=after_stat(density)), binwidth = 1, colour = 'black', fill = 'white') +
+  stat_function(geom = "line", fun = plot_mix_comps,
+                args = list(mixmdl$mu[1], mixmdl$sigma[1], lam = mixmdl$lambda[1]),
+                colour = "red", lwd = 1.5) +
+  stat_function(geom = "line", fun = plot_mix_comps,
+                args = list(mixmdl$mu[2], mixmdl$sigma[2], lam = mixmdl$lambda[2]),
+                colour = "blue", lwd = 1.5) +
+  ylab("Density")
+```
+
+各データが2つの正規分布に属する確率を表示する。
+
+```{r}
+mixmdl$posterior %>% head()
+```
